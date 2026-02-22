@@ -42,6 +42,27 @@ async def link(key: str):
     r = requests.get("https://primesrc.me/api/v1/l", params={"key": key}, headers=HEADERS)
     return r.json()
 
+
+@app.get("/episodes")
+async def episodes(imdb: str, season: int):
+    r = requests.get("http://www.omdbapi.com/", params={
+        "apikey": OMDB_KEY,
+        "i": imdb,
+        "Season": season
+    })
+    return r.json()
+
+@app.get("/seasons")
+async def seasons(imdb: str):
+    # Get total seasons from OMDB
+    r = requests.get("http://www.omdbapi.com/", params={
+        "apikey": OMDB_KEY,
+        "i": imdb
+    })
+    data = r.json()
+    total = int(data.get("totalSeasons", 1))
+    return {"totalSeasons": total}
+
 @app.get("/download")
 async def download(primevid_url: str):
     async with async_playwright() as p:

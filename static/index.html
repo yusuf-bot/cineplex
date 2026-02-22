@@ -4,7 +4,7 @@
     <title>Video Downloader</title>
     <style>
         * { box-sizing: border-box; }
-        body { font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #fff; }
+        body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 20px; background: #111; color: #fff; }
         input { padding: 10px; width: 100%; background: #222; color: #fff; border: 1px solid #444; border-radius: 6px; margin: 5px 0; }
         button { padding: 10px; width: 100%; background: #e50914; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; margin: 5px 0; }
         button:hover { background: #c40812; }
@@ -12,13 +12,24 @@
         #search-results li { padding: 10px; background: #222; margin: 3px 0; border-radius: 6px; cursor: pointer; border: 1px solid #333; }
         #search-results li:hover { background: #333; }
         .badge { font-size: 11px; background: #444; padding: 2px 6px; border-radius: 4px; margin-left: 5px; }
-        #episode-fields { display: none; gap: 10px; margin: 5px 0; }
         .info { background: #222; padding: 10px; border-radius: 6px; margin: 8px 0; font-size: 14px; color: #aaa; }
         .dl-btn { display: block; padding: 14px; background: #28a745; color: white; text-decoration: none; text-align: center; border-radius: 6px; margin-top: 10px; font-size: 18px; font-weight: bold; }
         .dl-btn:hover { background: #218838; }
         .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #fff; border-top: 2px solid transparent; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 8px; vertical-align: middle; }
         @keyframes spin { to { transform: rotate(360deg); } }
         h2 { color: #e50914; }
+
+        /* Season/Episode picker */
+        #season-episode-picker { display: none; margin: 10px 0; }
+        #season-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+        .season-tab { padding: 6px 14px; background: #222; border: 1px solid #444; border-radius: 6px; cursor: pointer; font-size: 14px; }
+        .season-tab.active { background: #e50914; border-color: #e50914; }
+        #episode-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+        .episode-card { padding: 10px; background: #222; border: 1px solid #333; border-radius: 6px; cursor: pointer; font-size: 13px; }
+        .episode-card:hover { background: #333; border-color: #e50914; }
+        .episode-card.selected { background: #1a1a2e; border-color: #e50914; }
+        .ep-num { font-weight: bold; color: #e50914; }
+        .ep-title { color: #ccc; margin-top: 3px; font-size: 12px; }
     </style>
 </head>
 <body>
@@ -27,9 +38,10 @@
     <input id="search" placeholder="Search movie or TV show..." autocomplete="off" />
     <ul id="search-results"></ul>
 
-    <div id="episode-fields">
-        <input id="season" placeholder="Season" type="number" min="1" style="width:48%;margin-right:4%;display:inline-block" />
-        <input id="episode" placeholder="Episode" type="number" min="1" style="width:48%;display:inline-block" />
+    <!-- Season/Episode Picker for TV shows -->
+    <div id="season-episode-picker">
+        <div id="season-tabs"></div>
+        <div id="episode-grid"></div>
     </div>
 
     <button id="load-btn" style="display:none" onclick="getDownload()">⬇ Get Download Link</button>
@@ -37,6 +49,8 @@
 
     <script>
         let selectedTitle = null;
+        let selectedSeason = 1;
+        let selectedEpisode = null;
         let searchTimeout = null;
 
         document.getElementById("search").addEventListener("input", () => {
@@ -44,17 +58,16 @@
             const ul = document.getElementById("search-results");
             ul.innerHTML = "";
             selectedTitle = null;
+            selectedEpisode = null;
             document.getElementById("load-btn").style.display = "none";
+            document.getElementById("season-episode-picker").style.display = "none";
             if (query.length < 2) return;
 
             clearTimeout(searchTimeout);
             searchTimeout = setTimeout(async () => {
                 const r = await fetch(`/search?q=${encodeURIComponent(query)}`);
                 const data = await r.json();
-                if (data.Response === "False") {
-                    ul.innerHTML = "<li>No results found</li>";
-                    return;
-                }
+                if (data.Response === "False") { ul.innerHTML = "<li>No results found</li>"; return; }
                 data.Search.slice(0, 10).forEach(item => {
                     const li = document.createElement("li");
                     li.innerHTML = `${item.Title} <span class="badge">${item.Year}</span><span class="badge">${item.Type}</span>`;
@@ -64,13 +77,73 @@
             }, 400);
         });
 
-        function selectTitle(item) {
+        async function selectTitle(item) {
             selectedTitle = item;
+            selectedEpisode = null;
             document.getElementById("search").value = item.Title;
             document.getElementById("search-results").innerHTML = "";
-            document.getElementById("episode-fields").style.display = item.Type === "series" ? "flex" : "none";
-            document.getElementById("load-btn").style.display = "block";
             document.getElementById("result").innerHTML = `<div class="info">Selected: <b>${item.Title}</b> (${item.Year})</div>`;
+
+            if (item.Type === "series") {
+                document.getElementById("load-btn").style.display = "none";
+                document.getElementById("season-episode-picker").style.display = "block";
+                await loadSeasons(item.imdbID);
+            } else {
+                document.getElementById("season-episode-picker").style.display = "none";
+                document.getElementById("load-btn").style.display = "block";
+            }
+        }
+
+        async function loadSeasons(imdb) {
+            document.getElementById("season-tabs").innerHTML = `<div class="info"><span class="spinner"></span>Loading seasons...</div>`;
+            const r = await fetch(`/seasons?imdb=${imdb}`);
+            const data = await r.json();
+            const total = data.totalSeasons;
+
+            const tabs = document.getElementById("season-tabs");
+            tabs.innerHTML = "";
+            for (let i = 1; i <= total; i++) {
+                const btn = document.createElement("div");
+                btn.className = "season-tab" + (i === 1 ? " active" : "");
+                btn.textContent = `S${i}`;
+                btn.onclick = () => selectSeason(i);
+                tabs.appendChild(btn);
+            }
+
+            await selectSeason(1);
+        }
+
+        async function selectSeason(season) {
+            selectedSeason = season;
+            selectedEpisode = null;
+            document.getElementById("load-btn").style.display = "none";
+
+            // Update active tab
+            document.querySelectorAll(".season-tab").forEach((t, i) => {
+                t.classList.toggle("active", i + 1 === season);
+            });
+
+            document.getElementById("episode-grid").innerHTML = `<div class="info"><span class="spinner"></span>Loading episodes...</div>`;
+            const r = await fetch(`/episodes?imdb=${selectedTitle.imdbID}&season=${season}`);
+            const data = await r.json();
+
+            const grid = document.getElementById("episode-grid");
+            grid.innerHTML = "";
+            (data.Episodes || []).forEach(ep => {
+                const card = document.createElement("div");
+                card.className = "episode-card";
+                card.innerHTML = `<div class="ep-num">E${ep.Episode}</div><div class="ep-title">${ep.Title}</div>`;
+                card.onclick = () => selectEpisode(ep, card);
+                grid.appendChild(card);
+            });
+        }
+
+        function selectEpisode(ep, card) {
+            selectedEpisode = ep;
+            document.querySelectorAll(".episode-card").forEach(c => c.classList.remove("selected"));
+            card.classList.add("selected");
+            document.getElementById("load-btn").style.display = "block";
+            document.getElementById("result").innerHTML = `<div class="info">Selected: <b>${selectedTitle.Title}</b> S${selectedSeason}E${ep.Episode} — ${ep.Title}</div>`;
         }
 
         async function getDownload() {
@@ -78,10 +151,10 @@
 
             const imdb = selectedTitle.imdbID;
             const type = selectedTitle.Type === "series" ? "tv" : "movie";
-            const season = document.getElementById("season").value;
-            const episode = document.getElementById("episode").value;
+            const season = selectedSeason;
+            const episode = selectedEpisode?.Episode;
 
-            if (type === "tv" && (!season || !episode)) return alert("Enter season and episode");
+            if (type === "tv" && !episode) return alert("Select an episode first");
 
             document.getElementById("result").innerHTML = `<div class="info"><span class="spinner"></span>Fetching servers...</div>`;
 
@@ -98,13 +171,11 @@
                 }
 
                 document.getElementById("result").innerHTML = `<div class="info"><span class="spinner"></span>Getting player link...</div>`;
-
                 const r2 = await fetch(`/link?key=${server.key}`);
                 const data2 = await r2.json();
                 const primevid_url = data2.link + "&dl=1";
 
                 document.getElementById("result").innerHTML = `<div class="info"><span class="spinner"></span>Launching browser & extracting link... (~15s)</div>`;
-
                 const r3 = await fetch(`/download?primevid_url=${encodeURIComponent(primevid_url)}`);
                 const data3 = await r3.json();
 
