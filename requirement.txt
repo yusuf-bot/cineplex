@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+requests
+playwright
+httpx
+python-multipart
+python-dotenv

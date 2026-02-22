@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Video Downloader</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; background: #111; color: #fff; }
+        input { padding: 10px; width: 100%; background: #222; color: #fff; border: 1px solid #444; border-radius: 6px; margin: 5px 0; }
+        button { padding: 10px; width: 100%; background: #e50914; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; margin: 5px 0; }
+        button:hover { background: #c40812; }
+        #search-results { list-style: none; padding: 0; margin: 5px 0; }
+        #search-results li { padding: 10px; background: #222; margin: 3px 0; border-radius: 6px; cursor: pointer; border: 1px solid #333; }
+        #search-results li:hover { background: #333; }
+        .badge { font-size: 11px; background: #444; padding: 2px 6px; border-radius: 4px; margin-left: 5px; }
+        #episode-fields { display: none; gap: 10px; margin: 5px 0; }
+        .info { background: #222; padding: 10px; border-radius: 6px; margin: 8px 0; font-size: 14px; color: #aaa; }
+        .dl-btn { display: block; padding: 14px; background: #28a745; color: white; text-decoration: none; text-align: center; border-radius: 6px; margin-top: 10px; font-size: 18px; font-weight: bold; }
+        .dl-btn:hover { background: #218838; }
+        .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #fff; border-top: 2px solid transparent; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 8px; vertical-align: middle; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        h2 { color: #e50914; }
+    </style>
+</head>
+<body>
+    <h2>🎬 Video Downloader</h2>
+
+    <input id="search" placeholder="Search movie or TV show..." autocomplete="off" />
+    <ul id="search-results"></ul>
+
+    <div id="episode-fields">
+        <input id="season" placeholder="Season" type="number" min="1" style="width:48%;margin-right:4%;display:inline-block" />
+        <input id="episode" placeholder="Episode" type="number" min="1" style="width:48%;display:inline-block" />
+    </div>
+
+    <button id="load-btn" style="display:none" onclick="getDownload()">⬇ Get Download Link</button>
+    <div id="result"></div>
+
+    <script>
+        let selectedTitle = null;
+        let searchTimeout = null;
+
+        document.getElementById("search").addEventListener("input", () => {
+            const query = document.getElementById("search").value.trim();
+            const ul = document.getElementById("search-results");
+            ul.innerHTML = "";
+            selectedTitle = null;
+            document.getElementById("load-btn").style.display = "none";
+            if (query.length < 2) return;
+
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(async () => {
+                const r = await fetch(`/search?q=${encodeURIComponent(query)}`);
+                const data = await r.json();
+                if (data.Response === "False") {
+                    ul.innerHTML = "<li>No results found</li>";
+                    return;
+                }
+                data.Search.slice(0, 10).forEach(item => {
+                    const li = document.createElement("li");
+                    li.innerHTML = `${item.Title} <span class="badge">${item.Year}</span><span class="badge">${item.Type}</span>`;
+                    li.onclick = () => selectTitle(item);
+                    ul.appendChild(li);
+                });
+            }, 400);
+        });
+
+        function selectTitle(item) {
+            selectedTitle = item;
+            document.getElementById("search").value = item.Title;
+            document.getElementById("search-results").innerHTML = "";
+            document.getElementById("episode-fields").style.display = item.Type === "series" ? "flex" : "none";
+            document.getElementById("load-btn").style.display = "block";
+            document.getElementById("result").innerHTML = `<div class="info">Selected: <b>${item.Title}</b> (${item.Year})</div>`;
+        }
+
+        async function getDownload() {
+            if (!selectedTitle) return;
+
+            const imdb = selectedTitle.imdbID;
+            const type = selectedTitle.Type === "series" ? "tv" : "movie";
+            const season = document.getElementById("season").value;
+            const episode = document.getElementById("episode").value;
+
+            if (type === "tv" && (!season || !episode)) return alert("Enter season and episode");
+
+            document.getElementById("result").innerHTML = `<div class="info"><span class="spinner"></span>Fetching servers...</div>`;
+
+            try {
+                let url = `/servers?imdb=${imdb}&type=${type}`;
+                if (type === "tv") url += `&season=${season}&episode=${episode}`;
+                const r1 = await fetch(url);
+                const data1 = await r1.json();
+                const server = data1.servers?.find(s => s.name === "PrimeVid");
+
+                if (!server) {
+                    document.getElementById("result").innerHTML = `<div class="info" style="color:red">❌ PrimeVid not available.</div>`;
+                    return;
+                }
+
+                document.getElementById("result").innerHTML = `<div class="info"><span class="spinner"></span>Getting player link...</div>`;
+
+                const r2 = await fetch(`/link?key=${server.key}`);
+                const data2 = await r2.json();
+                const primevid_url = data2.link + "&dl=1";
+
+                document.getElementById("result").innerHTML = `<div class="info"><span class="spinner"></span>Launching browser & extracting link... (~15s)</div>`;
+
+                const r3 = await fetch(`/download?primevid_url=${encodeURIComponent(primevid_url)}`);
+                const data3 = await r3.json();
+
+                if (data3.error) {
+                    document.getElementById("result").innerHTML = `<div class="info" style="color:red">❌ ${data3.error}</div>`;
+                    return;
+                }
+
+                const filename = server.file_name || "video.mp4";
+                const proxyUrl = `/proxy-download?url=${encodeURIComponent(data3.url)}&title=${encodeURIComponent(filename)}`;
+
+                document.getElementById("result").innerHTML = `
+                    <div class="info">✅ ${filename} | ${server.quality || "Unknown quality"}</div>
+                    <a class="dl-btn" href="${proxyUrl}" download="${filename}">⬇️ Download</a>
+                `;
+
+            } catch (err) {
+                document.getElementById("result").innerHTML = `<div class="info" style="color:red">❌ Error: ${err.message}</div>`;
+            }
+        }
+    </script>
+</body>
+</html>
